@@ -1,0 +1,26 @@
+parameters:
+  - name: secureFile
+    type: string
+    default: salesforce-jwt.key
+  - name: alias
+    type: string
+    default: target-org
+
+steps:
+  - task: DownloadSecureFile@1
+    name: jwtKey
+    displayName: Download Salesforce JWT private key
+    inputs:
+      secureFile: ${{ parameters.secureFile }}
+
+  - bash: |
+      set -euo pipefail
+      chmod 600 "$(jwtKey.secureFilePath)"
+      export SF_JWT_KEY_FILE="$(jwtKey.secureFilePath)"
+      export SF_ALIAS="${{ parameters.alias }}"
+      ./scripts/auth-jwt.sh
+    displayName: Authenticate to Salesforce
+    env:
+      SF_CLIENT_ID: $(SF_CLIENT_ID)
+      SF_USERNAME: $(SF_USERNAME)
+      SF_INSTANCE_URL: $(SF_INSTANCE_URL)

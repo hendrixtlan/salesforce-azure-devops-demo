@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Package xmlns="http://soap.sforce.com/2006/04/metadata">
+    <types>
+        <members>CaseEscalationService</members>
+        <members>CaseEscalationServiceTest</members>
+        <name>ApexClass</name>
+    </types>
+    <types>
+        <members>CaseEscalationTrigger</members>
+        <name>ApexTrigger</name>
+    </types>
+    <types>
+        <members>Case.Escalation_Level__c</members>
+        <name>CustomField</name>
+    </types>
+    <types>
+        <members>Case_DevOps_Demo</members>
+        <name>PermissionSet</name>
+    </types>
+    <version>68.0</version>
+</Package>

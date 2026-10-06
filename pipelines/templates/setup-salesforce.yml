@@ -1,0 +1,17 @@
+steps:
+  - task: UseNode@1
+    displayName: Use Node.js 22
+    inputs:
+      version: '22.x'
+
+  - bash: |
+      set -euo pipefail
+      npm install --global @salesforce/cli
+      sf version
+    displayName: Install Salesforce CLI
+
+  - bash: |
+      set -euo pipefail
+      sf plugins install @salesforce/plugin-code-analyzer
+      sf code-analyzer --help >/dev/null
+    displayName: Install Salesforce Code Analyzer

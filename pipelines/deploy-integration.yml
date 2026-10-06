@@ -1,0 +1,27 @@
+trigger:
+  branches:
+    include:
+      - main
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - group: salesforce-integration
+
+steps:
+  - checkout: self
+    clean: true
+
+  - template: templates/setup-salesforce.yml
+
+  - template: templates/auth-salesforce.yml
+    parameters:
+      secureFile: salesforce-integration-jwt.key
+      alias: integration
+
+  - bash: |
+      set -euo pipefail
+      export SF_ALIAS=integration
+      ./scripts/deploy.sh
+    displayName: Deploy to Integration
