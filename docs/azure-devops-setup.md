@@ -1,145 +1,125 @@
-# Azure DevOps setup
+# Azure DevOps Setup — V3
 
 ## 1. Variable groups
 
-Create these variable groups under **Pipelines > Library**:
+Create these groups under **Pipelines > Library**:
 
 - `salesforce-devhub`
 - `salesforce-integration`
 - `salesforce-uat`
 - `salesforce-production`
 
-Each group exposes environment-specific values:
+Each group contains environment-specific values:
 
-- `SF_CLIENT_ID` - Salesforce connected app consumer key / OAuth client ID.
-- `SF_USERNAME` - Salesforce automation/deployment username.
-- `SF_INSTANCE_URL` - Salesforce login or My Domain URL.
+- `SF_CLIENT_ID` — Salesforce connected-app consumer key.
+- `SF_USERNAME` — automation/deployment user.
+- `SF_INSTANCE_URL` — login or My Domain URL.
 
-For `salesforce-devhub`, the Salesforce user must have access to the Dev Hub functionality required to create and delete scratch orgs.
-
-Do not store JWT private keys as ordinary pipeline variables.
+The Dev Hub user needs scratch-org and second-generation packaging permissions appropriate to the org.
 
 ## 2. Secure files
 
-Upload private keys under **Pipelines > Library > Secure files**:
+Upload the JWT private keys as Azure DevOps Secure Files:
 
 - `salesforce-devhub-jwt.key`
 - `salesforce-integration-jwt.key`
 - `salesforce-uat-jwt.key`
 - `salesforce-production-jwt.key`
 
-Authorize only the pipelines that require each key.
+Do not place private keys in Git, YAML variables, or pipeline artifacts.
 
-V2 PR validation needs only the Dev Hub key because the PR is validated in an ephemeral scratch org rather than in the shared Integration org.
-
-## 3. Connected app / JWT authentication
-
-Configure the Salesforce connected app and certificate/public key corresponding to each CI private key. The pipeline authenticates using `sf org login jwt`.
-
-Treat the client ID, usernames, URLs, and private-key access as environment-scoped configuration. Do not embed them in repository YAML.
-
-## 4. Scratch-org capacity
-
-V2 creates one scratch org per active PR validation run. Dev Hub scratch-org allocations are finite, so teams should:
-
-- Keep CI scratch-org duration short (this repo uses one day).
-- Delete each scratch org at the end of the pipeline.
-- Avoid creating the org until static analysis has passed.
-- Periodically inspect the Dev Hub for abandoned CI scratch orgs after canceled/aborted agents.
-- Control pipeline concurrency if the organization has a low active-scratch-org allocation.
-
-## 5. Azure Environments
+## 3. Azure Environments and approvals
 
 Create:
 
+- `salesforce-integration`
 - `salesforce-uat`
 - `salesforce-production`
 
-Configure approvals/checks on `salesforce-production`. A suitable portfolio configuration requires at least one manual approver before the production deployment job begins.
+At minimum, configure a manual approval/check on `salesforce-production`. Teams can also place an approval on UAT or package promotion if required by release governance.
 
-## 6. PR validation pipeline
+## 4. PR Build Validation
 
-Create an Azure Pipeline pointing to:
+Create a pipeline from:
 
 ```text
 pipelines/pr-validation.yml
 ```
 
-The pipeline consumes:
+Attach it to `main` as a required Azure Repos **Build Validation** policy. The YAML intentionally uses `trigger: none` and `pr: none`; Azure Repos branch policy starts the PR validation run.
+
+The checkout uses full Git history because SFDX-Git-Delta requires the refs used for comparison.
+
+The PR pipeline publishes:
 
 ```text
-variable group: salesforce-devhub
-secure file:    salesforce-devhub-jwt.key
+LWC Jest/JUnit + coverage
+Salesforce Code Analyzer SARIF + HTML
+unpackaged delta package.xml
+unpackaged destructiveChanges.xml
+SGD changes manifest
+Apex JUnit + JSON results
+scratch-org summary
+seed evidence
+Apex + Flow smoke-test evidence
 ```
 
-It generates a scratch alias from the Azure DevOps build ID, such as:
+## 5. V3 Release Pipeline
+
+Create another pipeline from:
 
 ```text
-pr-1842
+pipelines/release-v3.yml
 ```
 
-This makes parallel validation runs independent of each other.
-
-## 7. Branch policy
-
-Protect `main` under **Repos > Branches > main > Branch policies**:
-
-- Require pull requests.
-- Require at least one reviewer.
-- Require comment resolution.
-- Add `pipelines/pr-validation.yml` as a required **Build Validation** policy.
-- Reset reviewer votes when new changes are pushed if desired.
-- Optionally require linked work items for auditability.
-
-The YAML keeps `trigger: none` and `pr: none` because Azure Repos PR validation is driven through the Build Validation policy.
-
-## 8. PR test evidence
-
-Azure DevOps receives native JUnit Apex test results through `PublishTestResults@2` and also stores the broader `artifacts/` directory as a pipeline artifact.
-
-The evidence includes:
-
-```text
-artifacts/
-  code-analyzer/
-    results.sarif
-    results.html
-  scratch-org/
-    org-summary.json
-  test-results/
-    apex-test-results.json
-    junit/
-      ...xml
-  seed-data/
-    case-id.txt
-    seed-summary.json
-  smoke-test/
-    case-query.json
-```
-
-`org-summary.json` is intentionally sanitized and does not contain Salesforce access tokens.
-
-## 9. Quality thresholds
-
-The PR YAML currently defines:
-
-```yaml
-MIN_TEST_RUN_COVERAGE: '75'
-```
-
-Raise the repository threshold as the codebase matures. This number represents the coverage measured by the CI test run; production release policy should separately account for Salesforce deployment requirements and org-wide coverage.
-
-The Salesforce Code Analyzer script uses a `High` severity failure threshold by default. Both thresholds can be changed without rewriting the scripts.
-
-## 10. Long-lived environments
-
-After merge, the existing pipelines still use separate variable groups and Secure Files:
+Its contract is:
 
 ```text
 main
-  -> salesforce-integration
-  -> salesforce-uat
-  -> salesforce-production
+  -> build 04t package version once
+  -> build unpackaged delta once
+  -> Integration installs same 04t + delta
+  -> UAT installs same 04t + delta
+  -> Dev Hub promotes tested 04t
+  -> Production approval
+  -> Production installs same released 04t + delta
 ```
 
-This separates ephemeral PR validation credentials from release/deployment credentials and keeps least-privilege boundaries clearer.
+The release bundle is a pipeline artifact. Environment stages download the artifact instead of rebuilding the package.
+
+## 6. Unlocked package bootstrap
+
+The first package build calls `scripts/package/find-or-create.sh`. It searches the Dev Hub for `CaseEscalationCore` and creates an unlocked package when none exists. The Dev Hub then owns the long-lived `0Ho...` package ID.
+
+The release pipeline creates a new immutable subscriber package version (`04t...`) for each candidate. The pipeline stores that ID under `artifacts/package/`.
+
+For a production implementation, consider creating the package once as an explicit platform bootstrap step and committing its package alias/ID policy according to your team's governance model rather than allowing arbitrary build agents to create packages.
+
+## 7. Delta deployment
+
+The pipeline installs SFDX-Git-Delta only in jobs that generate deltas. Delta generation is scoped to:
+
+```text
+unpackaged/
+```
+
+Package-owned `force-app/` metadata is never sent through the delta path.
+
+`DELTA_MODE=false` forces a full deployment of `unpackaged/` when incremental delivery should be bypassed.
+
+## 8. Optional SonarQube
+
+`pipelines/pr-validation-sonarqube.yml` is intentionally separate from the baseline PR pipeline. Before using it:
+
+1. Install the SonarQube Server Azure DevOps extension.
+2. Create the SonarQube service connection.
+3. Update project/service-connection names if needed.
+4. Confirm the SonarQube edition supports the languages and features you expect to analyze.
+
+This keeps the default repo runnable without a commercial SonarQube dependency.
+
+## 9. Scratch-org capacity
+
+The PR pipeline creates one one-day scratch org per validation. Static analysis and local LWC tests run first so obvious failures do not consume a scratch-org allocation. Cleanup uses `condition: always()`.
+
+An agent can still be terminated before cleanup executes, so teams should monitor active scratch orgs in the Dev Hub and remove abandoned CI environments.

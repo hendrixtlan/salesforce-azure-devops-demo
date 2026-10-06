@@ -1,0 +1,94 @@
+trigger: none
+pr: none
+
+pool:
+  vmImage: ubuntu-latest
+
+stages:
+  - stage: Deploy_UAT
+    displayName: Deploy to UAT
+    variables:
+      - group: salesforce-uat
+    jobs:
+      - deployment: DeployUAT
+        displayName: UAT deployment
+        environment: salesforce-uat
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                  clean: true
+                - template: templates/setup-salesforce.yml
+                - template: templates/auth-salesforce.yml
+                  parameters:
+                    secureFile: salesforce-uat-jwt.key
+                    alias: uat
+                - bash: |
+                    set -euo pipefail
+                    export SF_ALIAS=uat
+                    ./scripts/deploy.sh
+                  displayName: Deploy metadata to UAT
+
+  - stage: Validate_Production
+    displayName: Validate production deployment
+    dependsOn: Deploy_UAT
+    variables:
+      - group: salesforce-production
+    jobs:
+      - job: ValidateProd
+        displayName: Production validation
+        steps:
+          - checkout: self
+            clean: true
+          - template: templates/setup-salesforce.yml
+          - template: templates/auth-salesforce.yml
+            parameters:
+              secureFile: salesforce-production-jwt.key
+              alias: production
+          - bash: |
+              set -euo pipefail
+              export SF_ALIAS=production
+              ./scripts/validate-production.sh
+            displayName: Validate production release
+          - task: PublishPipelineArtifact@1
+            displayName: Publish validation job ID
+            inputs:
+              targetPath: production-validation-job-id.txt
+              artifact: production-validation
+
+  - stage: Deploy_Production
+    displayName: Quick deploy to Production
+    dependsOn: Validate_Production
+    condition: succeeded()
+    variables:
+      - group: salesforce-production
+    jobs:
+      - deployment: DeployProd
+        displayName: Production deployment
+        environment: salesforce-production
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                  clean: true
+                - template: templates/setup-salesforce.yml
+                - template: templates/auth-salesforce.yml
+                  parameters:
+                    secureFile: salesforce-production-jwt.key
+                    alias: production
+                - task: DownloadPipelineArtifact@2
+                  displayName: Download production validation job ID
+                  inputs:
+                    artifact: production-validation
+                    path: $(Pipeline.Workspace)/production-validation
+                - bash: |
+                    set -euo pipefail
+                    JOB_ID=$(cat "$(Pipeline.Workspace)/production-validation/production-validation-job-id.txt")
+                    echo "Quick deploying validated job: $JOB_ID"
+                    sf project deploy quick \
+                      --job-id "$JOB_ID" \
+                      --target-org production \
+                      --wait 45
+                  displayName: Quick deploy validated release

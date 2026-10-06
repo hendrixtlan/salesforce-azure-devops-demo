@@ -6,12 +6,13 @@ OUTPUT_FILE="${1:-production-validation.json}"
 
 sf project deploy validate \
   --source-dir force-app \
+  --source-dir unpackaged \
   --target-org "$SF_ALIAS" \
   --test-level RunLocalTests \
   --wait 45 \
   --json > "$OUTPUT_FILE"
 
-JOB_ID=$(python - "$OUTPUT_FILE" <<'PY2'
+JOB_ID=$(python - "$OUTPUT_FILE" <<'PY'
 import json, sys
 with open(sys.argv[1], encoding='utf-8') as f:
     payload = json.load(f)
@@ -20,7 +21,7 @@ job_id = result.get('id') or result.get('jobId')
 if not job_id:
     raise SystemExit('Validation completed but no deployment job ID was returned.')
 print(job_id)
-PY2
+PY
 )
 
 echo "Production validation job: $JOB_ID"

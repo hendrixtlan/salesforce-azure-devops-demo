@@ -17,7 +17,7 @@ QUERY_RESULT="$RESULT_DIR/case-query.json"
 
 sf data query \
   --target-org "$SCRATCH_ALIAS" \
-  --query "SELECT Id, Subject, Priority, Escalation_Level__c FROM Case WHERE Id = '${CASE_ID}'" \
+  --query "SELECT Id, Subject, Priority, Escalation_Level__c, Escalation_Source__c FROM Case WHERE Id = '${CASE_ID}'" \
   --json > "$QUERY_RESULT"
 
 python - "$QUERY_RESULT" <<'PY'
@@ -32,12 +32,16 @@ if len(records) != 1:
 record = records[0]
 priority = record.get("Priority")
 escalation = record.get("Escalation_Level__c")
+source = record.get("Escalation_Source__c")
 print(f"Smoke test Case: {record.get('Id')}")
 print(f"Escalation level: {escalation}")
-print(f"Priority after trigger: {priority}")
+print(f"Priority after Apex trigger: {priority}")
+print(f"Escalation source after Flow: {source}")
 if escalation != "Critical":
     raise SystemExit(f"Expected Escalation_Level__c=Critical, got {escalation!r}.")
 if priority != "High":
-    raise SystemExit(f"Expected trigger to set Priority=High, got {priority!r}.")
-print("Behavioral smoke test passed.")
+    raise SystemExit(f"Expected Apex trigger to set Priority=High, got {priority!r}.")
+if source != "Record-Triggered Flow":
+    raise SystemExit(f"Expected Flow to set Escalation_Source__c, got {source!r}.")
+print("Behavioral smoke test passed for Apex + Flow automation.")
 PY

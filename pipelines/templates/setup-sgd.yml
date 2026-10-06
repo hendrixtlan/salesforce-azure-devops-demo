@@ -1,0 +1,6 @@
+steps:
+  - bash: |
+      set -euo pipefail
+      printf 'y\n' | sf plugins install sfdx-git-delta
+      sf sgd source delta --help >/dev/null
+    displayName: Install SFDX-Git-Delta

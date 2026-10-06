@@ -1,0 +1,11 @@
+<template>
+    <lightning-card title="Case Escalation" icon-name="standard:case">
+        <div class="slds-var-p-horizontal_medium" data-id="summary">
+            <p><strong>Escalation level:</strong> <span data-id="level">{escalationLevel}</span></p>
+            <p><strong>Priority:</strong> <span data-id="priority">{priority}</span></p>
+            <p if:true={isCritical} class="slds-text-color_error" data-id="critical-message">
+                Critical escalation requires immediate review.
+            </p>
+        </div>
+    </lightning-card>
+</template>

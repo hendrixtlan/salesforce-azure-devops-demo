@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.0.0 - Hybrid Salesforce release engineering
+
+- Added unlocked-package release model for `force-app` with build-once/promote-many semantics.
+- Added Salesforce-aware delta generation/deployment with SFDX-Git-Delta for `unpackaged` metadata only.
+- Added explicit full-deployment fallback with `DELTA_MODE=false`.
+- Added Lightning Web Component metadata plus Jest unit tests, JUnit publication, and code-coverage publication.
+- Added record-triggered Flow metadata and extended behavioral smoke testing to validate Flow + Apex interaction.
+- Expanded Azure DevOps PR validation with full Git history, delta review evidence, and multi-surface test publishing.
+- Added optional SonarQube Azure DevOps template/pipeline without making the core pipeline depend on the commercial extension.
+- Added a unified V3 package release pipeline: Build -> Integration -> UAT -> Promote -> Production.
+- Added package release evidence and installed-package capture.
+- Added Gearset and Copado comparison blueprints.
+
 ## 2.0.0 - Ephemeral PR validation
 
 - Replaced shared-sandbox PR validation with one scratch org per pipeline run.

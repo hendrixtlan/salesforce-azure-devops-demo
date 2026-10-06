@@ -1,3 +1,5 @@
+> Historical V2 design retained for progression/context. V3 keeps the scratch-org model and extends it with LWC/Flow validation and package-based releases.
+
 # V2 - Ephemeral PR environments
 
 ## Goal

@@ -3,7 +3,7 @@ steps:
       set -euo pipefail
       export SCRATCH_ALIAS='$(SCRATCH_ALIAS)'
       ./scripts/scratch-org/deploy.sh
-    displayName: Deploy metadata to scratch org
+    displayName: Deploy packaged + unpackaged metadata to scratch org
 
   - bash: |
       set -euo pipefail
@@ -34,4 +34,4 @@ steps:
       set -euo pipefail
       export SCRATCH_ALIAS='$(SCRATCH_ALIAS)'
       ./scripts/scratch-org/smoke-test.sh
-    displayName: Run behavioral smoke test
+    displayName: Run Apex + Flow behavioral smoke test

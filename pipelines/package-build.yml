@@ -1,0 +1,31 @@
+trigger: none
+pr: none
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - group: salesforce-devhub
+
+steps:
+  - checkout: self
+    clean: true
+    fetchDepth: 0
+  - template: templates/setup-salesforce.yml
+  - template: templates/run-lwc-tests.yml
+  - template: templates/run-static-analysis.yml
+  - template: templates/auth-salesforce.yml
+    parameters:
+      secureFile: salesforce-devhub-jwt.key
+      alias: devhub
+  - bash: |
+      set -euo pipefail
+      export DEV_HUB_ALIAS=devhub
+      export RELEASE_BRANCH='$(Build.SourceBranchName)'
+      ./scripts/package/find-or-create.sh
+      ./scripts/package/build-version.sh
+    displayName: Build unlocked package version
+  - task: PublishPipelineArtifact@1
+    inputs:
+      targetPath: artifacts/package
+      artifact: package-version

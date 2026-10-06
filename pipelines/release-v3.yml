@@ -1,0 +1,180 @@
+trigger:
+  branches:
+    include:
+      - main
+
+pool:
+  vmImage: ubuntu-latest
+
+stages:
+  - stage: Build
+    displayName: Quality + immutable package build
+    variables:
+      - group: salesforce-devhub
+    jobs:
+      - job: BuildPackage
+        steps:
+          - checkout: self
+            clean: true
+            fetchDepth: 0
+          - template: templates/setup-salesforce.yml
+          - template: templates/run-lwc-tests.yml
+          - template: templates/run-static-analysis.yml
+          - template: templates/setup-sgd.yml
+          - template: templates/auth-salesforce.yml
+            parameters:
+              secureFile: salesforce-devhub-jwt.key
+              alias: devhub
+          - bash: |
+              set -euo pipefail
+              export DEV_HUB_ALIAS=devhub
+              export RELEASE_BRANCH=main
+              ./scripts/package/find-or-create.sh
+              ./scripts/package/build-version.sh
+            displayName: Build unlocked package version
+          - bash: |
+              set -euo pipefail
+              export DELTA_FROM_REF='HEAD~1'
+              export DELTA_TO_REF='HEAD'
+              export DELTA_SOURCE_DIR='unpackaged'
+              ./scripts/delta/generate.sh
+            displayName: Build unpackaged delta
+          - task: PublishPipelineArtifact@1
+            displayName: Publish release bundle
+            inputs:
+              targetPath: artifacts
+              artifact: salesforce-release
+              publishLocation: pipeline
+
+  - stage: Integration
+    displayName: Install same package + unpackaged delta in Integration
+    dependsOn: Build
+    variables:
+      - group: salesforce-integration
+    jobs:
+      - deployment: DeployIntegration
+        environment: salesforce-integration
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                  clean: true
+                  fetchDepth: 0
+                - template: templates/setup-salesforce.yml
+                - template: templates/setup-sgd.yml
+                - template: templates/auth-salesforce.yml
+                  parameters:
+                    secureFile: salesforce-integration-jwt.key
+                    alias: integration
+                - task: DownloadPipelineArtifact@2
+                  inputs:
+                    artifact: salesforce-release
+                    path: $(Build.SourcesDirectory)/artifacts
+                - bash: |
+                    set -euo pipefail
+                    export SF_ALIAS=integration
+                    ./scripts/package/install-version.sh
+                    ./scripts/delta/deploy.sh
+                    sf org assign permset --name Case_DevOps_Demo --target-org integration
+                    ./scripts/package/capture-installed.sh
+                  displayName: Install immutable package + deploy unpackaged delta
+                - task: PublishPipelineArtifact@1
+                  displayName: Publish Integration deployment evidence
+                  inputs:
+                    targetPath: artifacts/package
+                    artifact: integration-package-evidence
+
+  - stage: UAT
+    displayName: Promote release candidate to UAT
+    dependsOn: Integration
+    variables:
+      - group: salesforce-uat
+    jobs:
+      - deployment: DeployUAT
+        environment: salesforce-uat
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                  clean: true
+                - template: templates/setup-salesforce.yml
+                - template: templates/auth-salesforce.yml
+                  parameters:
+                    secureFile: salesforce-uat-jwt.key
+                    alias: uat
+                - task: DownloadPipelineArtifact@2
+                  inputs:
+                    artifact: salesforce-release
+                    path: $(Build.SourcesDirectory)/artifacts
+                - bash: |
+                    set -euo pipefail
+                    export SF_ALIAS=uat
+                    ./scripts/package/install-version.sh
+                    ./scripts/delta/deploy.sh
+                    sf org assign permset --name Case_DevOps_Demo --target-org uat
+                    ./scripts/package/capture-installed.sh
+                  displayName: Install exact package version in UAT
+
+  - stage: Promote
+    displayName: Promote tested package version
+    dependsOn: UAT
+    variables:
+      - group: salesforce-devhub
+    jobs:
+      - job: PromotePackage
+        steps:
+          - checkout: self
+            clean: true
+          - template: templates/setup-salesforce.yml
+          - template: templates/auth-salesforce.yml
+            parameters:
+              secureFile: salesforce-devhub-jwt.key
+              alias: devhub
+          - task: DownloadPipelineArtifact@2
+            inputs:
+              artifact: salesforce-release
+              path: $(Build.SourcesDirectory)/artifacts
+          - bash: |
+              set -euo pipefail
+              export DEV_HUB_ALIAS=devhub
+              ./scripts/package/promote-version.sh
+            displayName: Promote package version to Released
+
+  - stage: Production
+    displayName: Production release
+    dependsOn: Promote
+    variables:
+      - group: salesforce-production
+    jobs:
+      - deployment: DeployProduction
+        environment: salesforce-production
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                  clean: true
+                - template: templates/setup-salesforce.yml
+                - template: templates/auth-salesforce.yml
+                  parameters:
+                    secureFile: salesforce-production-jwt.key
+                    alias: production
+                - task: DownloadPipelineArtifact@2
+                  inputs:
+                    artifact: salesforce-release
+                    path: $(Build.SourcesDirectory)/artifacts
+                - bash: |
+                    set -euo pipefail
+                    export SF_ALIAS=production
+                    ./scripts/package/install-version.sh
+                    ./scripts/delta/deploy.sh
+                    sf org assign permset --name Case_DevOps_Demo --target-org production
+                    ./scripts/package/capture-installed.sh
+                  displayName: Install released package + unpackaged delta
+                - task: PublishPipelineArtifact@1
+                  displayName: Publish Production release evidence
+                  inputs:
+                    targetPath: artifacts/package
+                    artifact: production-package-evidence

@@ -1,0 +1,35 @@
+trigger: none
+pr: none
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - group: salesforce-devhub
+  - name: SCRATCH_ALIAS
+    value: 'pr-sonar-$(Build.BuildId)'
+  - name: MIN_TEST_RUN_COVERAGE
+    value: '75'
+
+steps:
+  - checkout: self
+    clean: true
+    fetchDepth: 0
+
+  - template: templates/setup-salesforce.yml
+  - template: templates/run-lwc-tests.yml
+  - template: templates/run-static-analysis.yml
+
+  - template: templates/sonarqube.yml
+    parameters:
+      serviceConnection: salesforce-sonarqube
+      projectKey: salesforce-azure-devops-demo
+      projectName: Salesforce Azure DevOps Demo
+
+  - template: templates/scratch-org-create.yml
+    parameters:
+      devHubSecureFile: salesforce-devhub-jwt.key
+      devHubAlias: devhub
+
+  - template: templates/scratch-org-validate.yml
+  - template: templates/scratch-org-cleanup.yml

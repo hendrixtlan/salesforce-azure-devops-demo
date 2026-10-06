@@ -1,0 +1,23 @@
+{
+  "name": "salesforce-azure-devops-demo",
+  "version": "3.0.0",
+  "private": true,
+  "description": "Salesforce release engineering reference implementation for Azure DevOps.",
+  "scripts": {
+    "test": "npm run test:unit",
+    "test:unit": "sfdx-lwc-jest",
+    "test:unit:ci": "sfdx-lwc-jest -- --ci --runInBand --reporters=default --reporters=jest-junit",
+    "test:unit:coverage": "sfdx-lwc-jest --coverage"
+  },
+  "devDependencies": {
+    "@salesforce/sfdx-lwc-jest": "^7.9.0",
+    "jest-junit": "^16.0.0"
+  },
+  "jest-junit": {
+    "outputDirectory": "artifacts/lwc-test-results",
+    "outputName": "junit.xml",
+    "suiteNameTemplate": "{filepath}",
+    "classNameTemplate": "{classname}",
+    "titleTemplate": "{title}"
+  }
+}

@@ -8,6 +8,7 @@ mkdir -p "$OUTPUT_DIR"
 sf code-analyzer run \
   --workspace . \
   --target force-app \
+  --target unpackaged \
   --rule-selector Recommended \
   --severity-threshold "$SEVERITY_THRESHOLD" \
   --include-suggestions \

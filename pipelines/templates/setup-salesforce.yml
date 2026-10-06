@@ -15,3 +15,8 @@ steps:
       sf plugins install @salesforce/plugin-code-analyzer
       sf code-analyzer --help >/dev/null
     displayName: Install Salesforce Code Analyzer
+
+  - bash: |
+      set -euo pipefail
+      npm install
+    displayName: Install JavaScript test dependencies

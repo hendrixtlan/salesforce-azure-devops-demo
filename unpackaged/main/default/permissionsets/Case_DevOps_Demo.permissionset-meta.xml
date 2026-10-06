@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PermissionSet xmlns="http://soap.sforce.com/2006/04/metadata">
+    <description>Org-specific access for the Case escalation DevOps demo.</description>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>Case.Escalation_Level__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>Case.Escalation_Source__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <label>Case DevOps Demo</label>
+</PermissionSet>

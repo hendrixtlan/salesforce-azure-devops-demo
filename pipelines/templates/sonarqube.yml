@@ -1,0 +1,31 @@
+parameters:
+  - name: serviceConnection
+    type: string
+  - name: projectKey
+    type: string
+  - name: projectName
+    type: string
+
+steps:
+  - task: SonarQubePrepare@8
+    displayName: Prepare SonarQube analysis
+    inputs:
+      SonarQube: '${{ parameters.serviceConnection }}'
+      scannerMode: cli
+      configMode: manual
+      cliProjectKey: '${{ parameters.projectKey }}'
+      cliProjectName: '${{ parameters.projectName }}'
+      cliSources: '.'
+      extraProperties: |
+        sonar.exclusions=**/node_modules/**,**/artifacts/**,**/.sf/**
+        sonar.javascript.lcov.reportPaths=artifacts/lwc-coverage/lcov.info
+
+  - task: SonarQubeAnalyze@8
+    displayName: Run SonarQube analysis
+    inputs:
+      jdkversion: JAVA_HOME_17_X64
+
+  - task: SonarQubePublish@8
+    displayName: Publish SonarQube quality gate
+    inputs:
+      pollingTimeoutSec: '300'

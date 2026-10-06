@@ -2,11 +2,19 @@
   "packageDirectories": [
     {
       "path": "force-app",
-      "default": true
+      "default": true,
+      "versionName": "Case Escalation Release 1.0",
+      "versionNumber": "1.0.0.NEXT",
+      "definitionFile": "config/project-scratch-def.json"
+    },
+    {
+      "path": "unpackaged",
+      "default": false
     }
   ],
   "name": "salesforce-azure-devops-demo",
   "namespace": "",
   "sfdcLoginUrl": "https://login.salesforce.com",
-  "sourceApiVersion": "68.0"
+  "sourceApiVersion": "68.0",
+  "packageAliases": {}
 }

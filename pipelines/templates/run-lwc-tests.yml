@@ -1,0 +1,25 @@
+steps:
+  - bash: |
+      set -euo pipefail
+      ./scripts/tests/run-lwc-tests.sh
+    displayName: Run LWC Jest tests
+
+  - task: PublishTestResults@2
+    displayName: Publish LWC Jest results
+    condition: succeededOrFailed()
+    inputs:
+      testResultsFormat: JUnit
+      testResultsFiles: 'junit.xml'
+      searchFolder: '$(Build.SourcesDirectory)/artifacts/lwc-test-results'
+      mergeTestResults: true
+      failTaskOnFailedTests: true
+      failTaskOnMissingResultsFile: false
+      testRunTitle: 'Salesforce LWC Jest - $(Build.BuildNumber)'
+
+  - task: PublishCodeCoverageResults@2
+    displayName: Publish LWC code coverage
+    condition: succeededOrFailed()
+    inputs:
+      summaryFileLocation: '$(Build.SourcesDirectory)/artifacts/lwc-coverage/cobertura-coverage.xml'
+      pathToSources: '$(Build.SourcesDirectory)'
+      failIfCoverageEmpty: false

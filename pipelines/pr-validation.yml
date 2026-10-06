@@ -1,5 +1,4 @@
-# V2: Azure Repos PR validation with one disposable Salesforce scratch org per run.
-# Attach this pipeline as a required Build Validation branch policy on main.
+# V3: multi-surface PR validation. Attach as an Azure Repos Build Validation policy on main.
 trigger: none
 pr: none
 
@@ -16,11 +15,34 @@ variables:
 steps:
   - checkout: self
     clean: true
+    fetchDepth: 0
+    persistCredentials: true
 
   - template: templates/setup-salesforce.yml
 
+  - template: templates/run-lwc-tests.yml
+
   # Fail fast before consuming a scratch-org allocation.
   - template: templates/run-static-analysis.yml
+
+  - template: templates/setup-sgd.yml
+
+  - bash: |
+      set -euo pipefail
+      git fetch origin main:refs/remotes/origin/main
+      export DELTA_FROM_REF='origin/main'
+      export DELTA_TO_REF='HEAD'
+      export DELTA_SOURCE_DIR='unpackaged'
+      ./scripts/delta/generate.sh
+    displayName: Generate Salesforce-aware unpackaged delta
+
+  - task: PublishPipelineArtifact@1
+    displayName: Publish delta review evidence
+    condition: always()
+    inputs:
+      targetPath: artifacts/delta
+      artifact: unpackaged-delta
+      publishLocation: pipeline
 
   - template: templates/scratch-org-create.yml
     parameters:
@@ -29,5 +51,4 @@ steps:
 
   - template: templates/scratch-org-validate.yml
 
-  # Cleanup and evidence publication execute even when a prior validation step fails.
   - template: templates/scratch-org-cleanup.yml

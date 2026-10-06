@@ -1,20 +1,43 @@
-# Rollback strategy
+# V3 Rollback and Recovery Strategy
 
-Salesforce metadata deployments are not identical to immutable application-image releases, so rollback must be deliberate.
+V3 has two different deployment contracts, so rollback is handled separately for packaged and unpackaged metadata.
 
-## Preferred strategy
+## Package-owned application metadata
 
-1. Tag every production release in Git.
-2. Keep `main` aligned with the intended production state.
-3. If a release must be reverted, create a dedicated revert branch from the last known-good tag or revert the offending commit(s).
-4. Open a pull request so the rollback itself passes the same static analysis and deployment validation gates.
-5. Validate the rollback against Production.
-6. Quick deploy the successful validation after approval.
+Every release candidate has an immutable subscriber package version ID (`04t...`). Record the currently approved production package version and the previous known-good version as release evidence.
 
-## Destructive changes
+For a failed release:
 
-Deleting metadata requires special handling through destructive manifests and should never be treated as a blind inverse of a deployment. Review dependencies and data impact before removal.
+1. Stop promotion if the candidate is still in Integration or UAT.
+2. If Production has already changed, prefer a corrective package version when the change includes schema/data evolution or when a direct downgrade is not safe/supported.
+3. Where package upgrade/install semantics permit the required recovery path, use the known package lineage and prior release evidence rather than attempting to reverse individual metadata files manually.
+4. Run the recovery through the same approval and evidence process.
+
+Package rollback is not equivalent to rolling back a container image; Salesforce metadata/data dependencies must be evaluated before changing versions.
+
+## Unpackaged metadata
+
+Unpackaged metadata is Git-owned. Tag every production release and retain the SGD manifests used for deployment.
+
+To recover:
+
+1. Revert the offending Git change or branch from the last known-good release tag.
+2. Run PR validation again.
+3. Generate the appropriate delta, or set `DELTA_MODE=false` and deploy the full unpackaged boundary.
+4. Review destructive changes explicitly.
 
 ## Data rollback
 
-Metadata rollback does not automatically undo data mutations caused by automation, Apex, integrations, or migrations. Data remediation must have its own runbook, backup/export strategy, and audit trail.
+Neither a package rollback nor metadata redeployment automatically reverses data mutations performed by Apex, Flow, integrations, or migrations. Data remediation requires a separate backup/export, transformation, approval, and audit procedure.
+
+## Evidence to retain
+
+- Git commit/tag
+- `0Ho...` package ID
+- deployed `04t...` package version ID
+- previous production `04t...`
+- SGD `package.xml` and `destructiveChanges.xml`
+- changes manifest
+- test/quality results
+- environment approvals
+- installed-package report after deployment
