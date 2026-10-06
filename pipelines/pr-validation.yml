@@ -1,5 +1,5 @@
-# Azure Repos PR validation is enforced through a Branch Policy / Build Validation.
-# Keep YAML PR triggers disabled and attach this pipeline to protected branches.
+# V2: Azure Repos PR validation with one disposable Salesforce scratch org per run.
+# Attach this pipeline as a required Build Validation branch policy on main.
 trigger: none
 pr: none
 
@@ -7,7 +7,11 @@ pool:
   vmImage: ubuntu-latest
 
 variables:
-  - group: salesforce-integration
+  - group: salesforce-devhub
+  - name: SCRATCH_ALIAS
+    value: 'pr-$(Build.BuildId)'
+  - name: MIN_TEST_RUN_COVERAGE
+    value: '75'
 
 steps:
   - checkout: self
@@ -15,18 +19,15 @@ steps:
 
   - template: templates/setup-salesforce.yml
 
-  - bash: |
-      set -euo pipefail
-      sf code-analyzer run --workspace . --target force-app --view table
-    displayName: Salesforce static analysis
+  # Fail fast before consuming a scratch-org allocation.
+  - template: templates/run-static-analysis.yml
 
-  - template: templates/auth-salesforce.yml
+  - template: templates/scratch-org-create.yml
     parameters:
-      secureFile: salesforce-integration-jwt.key
-      alias: integration
+      devHubSecureFile: salesforce-devhub-jwt.key
+      devHubAlias: devhub
 
-  - bash: |
-      set -euo pipefail
-      export SF_ALIAS=integration
-      ./scripts/validate-sandbox.sh
-    displayName: Validate metadata and run Apex tests
+  - template: templates/scratch-org-validate.yml
+
+  # Cleanup and evidence publication execute even when a prior validation step fails.
+  - template: templates/scratch-org-cleanup.yml

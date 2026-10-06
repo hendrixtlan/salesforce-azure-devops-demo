@@ -1,0 +1,37 @@
+steps:
+  - bash: |
+      set -euo pipefail
+      export SCRATCH_ALIAS='$(SCRATCH_ALIAS)'
+      ./scripts/scratch-org/deploy.sh
+    displayName: Deploy metadata to scratch org
+
+  - bash: |
+      set -euo pipefail
+      export SCRATCH_ALIAS='$(SCRATCH_ALIAS)'
+      export MIN_TEST_RUN_COVERAGE='$(MIN_TEST_RUN_COVERAGE)'
+      ./scripts/scratch-org/run-tests.sh
+    displayName: Run Apex tests and coverage gate
+
+  - task: PublishTestResults@2
+    displayName: Publish Apex test results
+    condition: succeededOrFailed()
+    inputs:
+      testResultsFormat: JUnit
+      testResultsFiles: '**/*.xml'
+      searchFolder: '$(Build.SourcesDirectory)/artifacts/test-results/junit'
+      mergeTestResults: true
+      failTaskOnFailedTests: true
+      failTaskOnMissingResultsFile: false
+      testRunTitle: 'Salesforce Apex - PR $(System.PullRequest.PullRequestId)'
+
+  - bash: |
+      set -euo pipefail
+      export SCRATCH_ALIAS='$(SCRATCH_ALIAS)'
+      ./scripts/scratch-org/seed.sh
+    displayName: Seed synthetic integration data
+
+  - bash: |
+      set -euo pipefail
+      export SCRATCH_ALIAS='$(SCRATCH_ALIAS)'
+      ./scripts/scratch-org/smoke-test.sh
+    displayName: Run behavioral smoke test

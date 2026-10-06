@@ -1,0 +1,14 @@
+steps:
+  - bash: |
+      export SCRATCH_ALIAS='$(SCRATCH_ALIAS)'
+      ./scripts/scratch-org/destroy.sh
+    displayName: Destroy ephemeral scratch org
+    condition: always()
+
+  - task: PublishPipelineArtifact@1
+    displayName: Publish PR validation evidence
+    condition: always()
+    inputs:
+      targetPath: artifacts
+      artifact: pr-validation-evidence
+      publishLocation: pipeline

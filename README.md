@@ -1,201 +1,316 @@
 # Salesforce DevOps with Azure DevOps
 
-Portfolio project demonstrating a production-shaped Salesforce delivery lifecycle using **Salesforce DX**, **Salesforce CLI (`sf`)**, **Azure Repos**, **Azure Pipelines**, **Git**, **YAML**, JWT-based CI authentication, automated Apex testing, static analysis, environment promotion, production validation, and controlled deployment.
+Portfolio-grade Salesforce DevOps project demonstrating **Salesforce DX**, **Salesforce CLI (`sf`)**, **Azure Repos**, **Azure Pipelines**, Git/YAML delivery controls, disposable scratch-org validation, Apex testing, Salesforce Code Analyzer, JWT-based automation, environment promotion, production validation, and controlled deployment.
+
+## Current version: V2 - Ephemeral PR environments
+
+V1 validated pull requests against a shared Integration sandbox. V2 isolates every PR in a newly created Salesforce scratch org, deploys the proposed metadata, runs unit and behavioral tests, publishes evidence, and destroys the org at the end of the run.
+
+```text
+Feature branch
+      |
+      v
+Pull Request
+      |
+      +--> Salesforce Code Analyzer
+      |
+      +--> Authenticate Dev Hub
+      |
+      +--> Create ephemeral scratch org
+      |
+      +--> Deploy repository metadata
+      |
+      +--> Assign permission set
+      |
+      +--> Apex tests + coverage gate
+      |
+      +--> Publish JUnit results
+      |
+      +--> Seed synthetic Case
+      |
+      +--> Behavioral smoke test
+      |
+      +--> Publish pipeline evidence
+      |
+      +--> Destroy scratch org (always)
+      v
+Merge to main
+      |
+      v
+Integration -> UAT -> Production validation -> Approval -> Quick Deploy
+```
 
 ## Business feature
 
-The repository includes a deliberately small Service Cloud-oriented feature so the project stays focused on DevOps. A custom Case field, `Escalation_Level__c`, drives a trigger/service that promotes Critical cases to High priority. Apex tests verify the behavior.
+The repository intentionally keeps the Salesforce application small so the DevOps lifecycle remains the primary artifact.
 
-The feature is intentionally simple; the delivery lifecycle is the main artifact.
+A custom Case field, `Escalation_Level__c`, supports three values:
 
-## Architecture
+- Standard
+- Priority
+- Critical
 
-```text
-Developer / Feature Branch
-          |
-          v
-     Azure Repos
-          |
-          | Pull Request
-          v
-+---------------------------+
-| PR Validation Pipeline    |
-| - Node 22                 |
-| - Salesforce CLI          |
-| - Code Analyzer           |
-| - JWT Authentication      |
-| - Dry-run metadata deploy |
-| - Apex tests              |
-+-------------+-------------+
-              |
-              v
-            main
-              |
-              v
-       Integration Org
-              |
-              v
-           UAT Org
-              |
-              v
-   Production Validation
-              |
-        Manual Approval
-              |
-              v
-  Salesforce Quick Deploy
-```
+`CaseEscalationTrigger` delegates to `CaseEscalationService`. A Critical Case is automatically promoted to Salesforce Priority `High`. Apex tests verify the behavior, and V2 adds an integration smoke test that creates an actual Case in the scratch org and queries it back to verify that the trigger executed correctly.
 
 ## Repository layout
 
 ```text
-force-app/                 Salesforce metadata in source format
-config/                    Scratch org definition
-manifest/                  Metadata manifest
-scripts/                   Reusable CI shell scripts
-pipelines/                 Azure Pipelines YAML
-pipelines/templates/       Shared pipeline templates
-docs/                      Azure DevOps and rollback runbooks
-sfdx-project.json          Salesforce DX project definition
+force-app/                         Salesforce metadata in source format
+config/                            Scratch-org definition
+manifest/                          Metadata deployment manifest
+scripts/
+  auth-jwt.sh                      Non-interactive Salesforce authentication
+  scratch-org/
+    create.sh                      Provision isolated PR environment
+    deploy.sh                      Deploy metadata + assign permission set
+    run-tests.sh                   Apex + test-run coverage quality gate
+    seed.sh                        Create synthetic test data
+    smoke-test.sh                  Verify persisted business behavior
+    destroy.sh                     Idempotent cleanup
+  quality/
+    static-analysis.sh             Salesforce Code Analyzer gate
+pipelines/
+  pr-validation.yml               V2 PR pipeline
+  deploy-integration.yml           Main -> Integration deployment
+  release.yml                      UAT + Production validate/quick-deploy
+  templates/                       Reusable Azure Pipeline templates
+docs/
+  azure-devops-setup.md            CI/CD configuration runbook
+  v2-pr-ephemeral-environments.md  V2 architecture and operating model
+  rollback-strategy.md             Metadata/data rollback guidance
+CHANGELOG.md                       Version history
+sfdx-project.json                  Salesforce DX project definition
 ```
+
+## V2 quality gates
+
+### 1. Static analysis
+
+Salesforce Code Analyzer executes before a scratch org is created. This is deliberate: a code-quality failure should not consume a Dev Hub scratch-org allocation.
+
+The gate uses Recommended rules and fails on violations meeting the configured `High` threshold. It also generates:
+
+```text
+artifacts/code-analyzer/results.sarif
+artifacts/code-analyzer/results.html
+```
+
+Both files are published as pipeline evidence.
+
+### 2. Isolated metadata deployment
+
+After authenticating the Dev Hub, the PR pipeline creates an org with a one-day lifetime:
+
+```bash
+sf org create scratch \
+  --definition-file config/project-scratch-def.json \
+  --alias <pipeline-generated-alias> \
+  --target-dev-hub devhub \
+  --duration-days 1
+```
+
+The complete `force-app` source is then deployed into the clean environment.
+
+### 3. Apex test + coverage gate
+
+Apex tests execute in the scratch org and produce JSON evidence plus JUnit output for Azure DevOps test reporting.
+
+The repository sets:
+
+```text
+MIN_TEST_RUN_COVERAGE=75
+```
+
+This is a **repository CI test-run coverage threshold**. It should not be confused with all Salesforce production-deployment and org-wide coverage rules.
+
+### 4. Synthetic integration data
+
+CI never copies production/customer data. `seed.sh` creates a synthetic Critical Case after the source has been deployed.
+
+### 5. Behavioral smoke test
+
+The smoke test queries that Case and asserts:
+
+```text
+Escalation_Level__c = Critical
+Priority             = High
+```
+
+This verifies that the deployed trigger/service works against persisted Salesforce data, rather than only compiling successfully.
+
+### 6. Unconditional cleanup
+
+Scratch-org deletion is configured with Azure Pipelines `condition: always()` so cleanup is attempted even after a validation failure.
 
 ## Prerequisites
 
-Local development:
+### Local
 
 - Node.js 22+
 - Salesforce CLI
-- A Salesforce Developer/Dev Hub org or sandbox for practice
 - Git
+- Salesforce Dev Hub for scratch-org development
 
-CI/CD:
+### Azure DevOps
 
-- Azure DevOps project with Azure Repos and Pipelines
-- Salesforce deployment users for the target environments
-- A Salesforce connected app configured for JWT bearer authentication
-- Environment-specific JWT private keys stored as Azure DevOps Secure Files
+- Azure DevOps project with Azure Repos and Azure Pipelines
+- Variable group `salesforce-devhub`
+- Variable groups for Integration, UAT, and Production
+- Salesforce connected app / OAuth client configured for JWT authentication
+- JWT private keys stored as Azure DevOps Secure Files
+- Salesforce deployment users for long-lived environments
 
-## Local setup
+See [`docs/azure-devops-setup.md`](docs/azure-devops-setup.md).
 
-Install Salesforce CLI:
+## Local V2 walkthrough
 
-```bash
-npm install --global @salesforce/cli
-sf version
-```
-
-Authenticate interactively for local development:
-
-```bash
-sf org login web --alias dev --set-default
-```
-
-Or, with a Dev Hub, create a scratch org:
+Authenticate a Dev Hub:
 
 ```bash
 sf org login web --alias devhub --set-default-dev-hub
-sf org create scratch --definition-file config/project-scratch-def.json --alias dev --set-default --duration-days 7
 ```
 
-Deploy the sample feature:
+Create an ephemeral scratch org:
 
 ```bash
-sf project deploy start --source-dir force-app --target-org dev --test-level RunLocalTests --wait 45
+export DEV_HUB_ALIAS=devhub
+export SCRATCH_ALIAS=local-pr-demo
+./scripts/scratch-org/create.sh
 ```
 
-Run tests:
+Deploy the repository:
 
 ```bash
-sf apex run test --target-org dev --test-level RunLocalTests --code-coverage --wait 20
+./scripts/scratch-org/deploy.sh
 ```
 
-Run static analysis:
+Run Apex tests and the coverage gate:
+
+```bash
+export MIN_TEST_RUN_COVERAGE=75
+./scripts/scratch-org/run-tests.sh
+```
+
+Seed data and execute the behavioral test:
+
+```bash
+./scripts/scratch-org/seed.sh
+./scripts/scratch-org/smoke-test.sh
+```
+
+Destroy the environment:
+
+```bash
+./scripts/scratch-org/destroy.sh
+```
+
+Run static analysis separately:
 
 ```bash
 sf plugins install @salesforce/plugin-code-analyzer
-sf code-analyzer run --workspace . --target force-app --view table
+./scripts/quality/static-analysis.sh
 ```
 
-## CI/CD flow
+## Azure DevOps delivery flow
 
-### 1. Pull request validation
+### Pull requests
 
-`pipelines/pr-validation.yml`
+`pipelines/pr-validation.yml` is attached to `main` as an Azure Repos **Build Validation** branch policy.
 
-The pipeline performs static analysis, authenticates to the Integration org, executes a dry-run deployment, and runs Apex tests. In Azure Repos, configure this pipeline as a required **Build Validation branch policy** on `main`.
+The YAML intentionally contains:
 
-### 2. Integration deployment
+```yaml
+trigger: none
+pr: none
+```
 
-`pipelines/deploy-integration.yml`
+Azure Repos invokes it through branch policy rather than a YAML PR trigger.
 
-A successful merge to `main` deploys the metadata to the Integration environment and runs local Apex tests.
+### Merge to main
 
-### 3. UAT and Production release
+`pipelines/deploy-integration.yml` deploys to the long-lived Integration org after a successful merge.
 
-`pipelines/release.yml`
+### UAT and Production
 
-The release pipeline:
+`pipelines/release.yml`:
 
 1. Deploys to UAT.
-2. Validates the same source against Production with `sf project deploy validate`.
-3. Captures the validated deployment job ID.
-4. Waits for the Azure DevOps Environment approval/check configured on `salesforce-production`.
-5. Executes `sf project deploy quick` using the successful validation job.
+2. Validates the same source against Production.
+3. Stores the successful validation deployment ID.
+4. Waits for the Azure DevOps `salesforce-production` environment approval.
+5. Performs `sf project deploy quick` using the validated job.
 
 ## Authentication model
 
-The pipeline uses JWT bearer authentication:
-
 ```text
 Azure Pipeline
-     |
-     | client id + username + instance URL
-     | protected private key (Secure File)
-     v
+      |
+      | OAuth client ID
+      | Salesforce username
+      | instance URL
+      | protected JWT private key
+      v
 Salesforce Connected App
-     |
-     v
-Salesforce Deployment User
+      |
+      +--> Dev Hub user       -> creates scratch orgs
+      +--> Integration user   -> deploys main
+      +--> UAT user           -> deploys release candidate
+      +--> Production user    -> validates / deploys release
 ```
 
-The private key never belongs in Git. Store it as an Azure DevOps Secure File and scope access to the required pipeline only.
+Private keys are never committed to Git.
 
-## Azure DevOps configuration
+## Pipeline evidence
 
-See [`docs/azure-devops-setup.md`](docs/azure-devops-setup.md) for variable groups, Secure Files, environments, approvals, and branch-policy configuration.
+A V2 PR run can retain:
+
+- Code Analyzer SARIF and HTML reports.
+- Sanitized scratch-org identity metadata (no access tokens).
+- Apex test JSON.
+- JUnit test files rendered by Azure DevOps.
+- Seeded record ID/summary.
+- Smoke-test query result.
+
+This gives a reviewer both a pass/fail signal and auditable technical evidence of what was validated.
 
 ## Rollback
 
-See [`docs/rollback-strategy.md`](docs/rollback-strategy.md). The project treats rollback as a governed Git-driven deployment rather than an unreviewed emergency script.
+See [`docs/rollback-strategy.md`](docs/rollback-strategy.md). Metadata rollback is Git-driven and reviewed. Data remediation is treated as a separate concern because reverting Salesforce metadata does not automatically reverse records changed by Apex, Flow, integrations, or migration jobs.
 
-## Branching model
+## What V2 demonstrates in an interview
 
-For this portfolio project, keep the strategy intentionally simple:
+A candidate can now explain that the pipeline:
+
+- Treats Git as the source of truth.
+- Uses source-driven Salesforce DX development.
+- Authenticates non-interactively through JWT.
+- Uses a Dev Hub to create an isolated Salesforce environment for each PR.
+- Fails fast on static-analysis violations.
+- Deploys metadata into a clean environment.
+- Executes Apex unit tests with a project-specific coverage quality gate.
+- Publishes test and analysis evidence to Azure DevOps.
+- Creates synthetic integration data rather than copying production data.
+- Runs an end-to-end behavioral smoke test.
+- Cleans up ephemeral infrastructure even on failure.
+- Promotes merged code through Integration, UAT, and controlled Production deployment.
+
+## Next enterprise increment (V3)
+
+The logical next version is **artifact-based Salesforce release engineering**:
 
 ```text
-feature/* -> PR -> main -> Integration -> UAT -> Production
+PR scratch-org validation
+        |
+        v
+merge to main
+        |
+        v
+create unlocked package version
+        |
+        v
+promote the same immutable package
+        |
+Integration -> UAT -> Production
 ```
 
-A larger organization may introduce `develop`, release branches, or package-based delivery. The important point is that protected branches, automated validation, approvals, and environment promotion are explicit and auditable.
-
-## What this project demonstrates in an interview
-
-- Salesforce source-driven development and Salesforce DX project structure.
-- Modern Salesforce CLI usage rather than relying on legacy command names.
-- Azure Repos branching, pull requests, and Build Validation.
-- YAML-based CI/CD pipelines.
-- Secure non-interactive authentication for CI.
-- Salesforce deployment validation and Apex testing.
-- Static-analysis quality gates.
-- Environment promotion and production approvals.
-- Validate-then-quick-deploy release strategy.
-- Rollback planning and separation of metadata rollback from data remediation.
-
-## Suggested next increments
-
-- Delta deployment using Git diff / a Salesforce-aware delta tool.
-- Dedicated package-based release model.
-- LWC and Flow metadata to broaden validation scenarios.
-- Test-result publishing into Azure DevOps.
-- SonarQube or additional quality/security gates.
-- Copado or Gearset comparison branch to show how a specialized Salesforce DevOps platform changes the workflow.
+V3 would add second-generation unlocked packages, versioning, package dependency management, release manifests, deployment metrics, and stronger rollback/version promotion controls.

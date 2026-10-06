@@ -1,0 +1,20 @@
+parameters:
+  - name: devHubSecureFile
+    type: string
+    default: salesforce-devhub-jwt.key
+  - name: devHubAlias
+    type: string
+    default: devhub
+
+steps:
+  - template: auth-salesforce.yml
+    parameters:
+      secureFile: ${{ parameters.devHubSecureFile }}
+      alias: ${{ parameters.devHubAlias }}
+
+  - bash: |
+      set -euo pipefail
+      export DEV_HUB_ALIAS='${{ parameters.devHubAlias }}'
+      export SCRATCH_ALIAS='$(SCRATCH_ALIAS)'
+      ./scripts/scratch-org/create.sh
+    displayName: Create ephemeral scratch org

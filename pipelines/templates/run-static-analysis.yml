@@ -1,0 +1,13 @@
+steps:
+  - bash: |
+      set -euo pipefail
+      ./scripts/quality/static-analysis.sh
+    displayName: Salesforce Code Analyzer quality gate
+
+  - task: PublishPipelineArtifact@1
+    displayName: Publish static-analysis evidence
+    condition: always()
+    inputs:
+      targetPath: artifacts/code-analyzer
+      artifact: code-analyzer
+      publishLocation: pipeline
