@@ -1,0 +1,43 @@
+trigger: none
+pr: none
+
+schedules:
+  - cron: '0 7 * * *'
+    displayName: Daily Production drift check
+    branches:
+      include:
+        - main
+    always: true
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - group: salesforce-production
+
+steps:
+  - checkout: self
+    clean: true
+  - template: templates/setup-salesforce.yml
+  - template: templates/auth-salesforce.yml
+    parameters:
+      secureFile: salesforce-production-jwt.key
+      alias: production
+  - bash: |
+      set -euo pipefail
+      export SF_ALIAS=production
+      ./scripts/drift/check.sh
+    displayName: Detect governed metadata drift
+  - bash: |
+      set -euo pipefail
+      export SF_ALIAS=production
+      ./scripts/drift/check-package.sh
+      ./scripts/drift/check-feature-state.sh
+    displayName: Check package and operational feature state
+  - task: PublishPipelineArtifact@1
+    condition: always()
+    displayName: Publish drift evidence
+    inputs:
+      targetPath: artifacts/drift
+      artifact: production-drift-evidence
+      publishLocation: pipeline

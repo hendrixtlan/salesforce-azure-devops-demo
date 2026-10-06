@@ -1,213 +1,218 @@
-# Salesforce DevOps with Azure DevOps — V3
+# Salesforce DevOps with Azure DevOps — V4
 
-Portfolio-grade Salesforce release-engineering project demonstrating Salesforce DX, Salesforce CLI (`sf`), Azure Repos/Pipelines, ephemeral scratch-org validation, Apex + Flow + LWC delivery, Salesforce Code Analyzer, JUnit/coverage publication, Salesforce-aware delta deployment, unlocked packages, immutable release promotion, JWT automation, environment approvals, and specialized-platform comparison.
+Portfolio-grade Salesforce release-engineering project demonstrating Salesforce DX, Salesforce CLI (`sf`), Azure Repos/Pipelines, ephemeral scratch-org validation, Apex + Flow + LWC delivery, Code Analyzer, optional SonarQube, Salesforce-aware delta deployment, unlocked packages, immutable promotion, controlled feature activation, production drift detection, recovery capture, post-deployment verification, release telemetry, and Salesforce DevOps platform comparisons.
 
-## Architecture
+## V4 operating model
 
 ```text
-Feature branch / PR
-        |
-        +--> LWC Jest + coverage
-        +--> Salesforce Code Analyzer
-        +--> optional SonarQube
-        +--> SGD delta report for unpackaged metadata
-        +--> ephemeral scratch org
-               |-- deploy package-owned source
-               |-- deploy unpackaged source
-               |-- Apex tests + coverage gate
-               |-- seed synthetic Case
-               |-- behavioral smoke test: Apex + Flow
-               '-- always destroy org
-        |
-        v
-      main
-        |
-        +--> build unlocked package version (04t...)
-        +--> generate unpackaged delta
-        |
-        v
-  Integration
-        |  install SAME 04t + delta
-        v
-      UAT
-        |  install SAME 04t + delta
-        v
- promote package version
-        |
-        v
- Production approval
-        |
-        v
- Production
-      install SAME released 04t + delta
+feature/*
+   |
+   v
+Pull Request
+   |-- LWC Jest + coverage
+   |-- Salesforce Code Analyzer
+   |-- optional SonarQube
+   |-- SGD change analysis
+   '-- ephemeral scratch org
+          |-- deploy source
+          |-- Apex tests
+          |-- synthetic data
+          '-- behavioral verification
+   |
+   v
+main
+   |
+   +---------------------- release/* or hotfix/* ---------------------+
+                                                                      |
+                                                                      v
+                                                               Build candidate
+                                                          04t package + delta
+                                                                      |
+                                                      +---------------+---------------+
+                                                      |                               |
+                                                      v                               v
+                                                Integration                         UAT
+                                               feature ON                        feature ON
+                                                verify OK                         verify OK
+                                                      \                               /
+                                                       +-------------+---------------+
+                                                                     v
+                                                            promote same 04t
+                                                                     |
+                                                                     v
+                                                        capture Production state
+                                                                     |
+                                                                     v
+                                                             Production deploy
+                                                              feature OFF
+                                                                     |
+                                                             post-deploy verify
+                                                                     |
+                                                    release manifest + telemetry
+                                                                     |
+                                                                     v
+                                                        separate approved activation
+                                                              feature ON
 ```
 
-## Ownership boundary
+## Key design decisions
 
-### `force-app/` — packaged application
+### Package-owned vs org-owned metadata
 
-The coherent feature is delivered as an unlocked package:
+`force-app/` contains the coherent application and is released as an unlocked package. `unpackaged/` contains org-specific metadata and runtime configuration. SFDX-Git-Delta is scoped only to the unpackaged boundary; the same component is never delivered by both mechanisms.
 
-- `CaseEscalationService` + tests
-- `CaseEscalationTrigger`
-- `Case.Escalation_Level__c`
-- `Case.Escalation_Source__c`
-- `Case_Escalation_Audit` record-triggered Flow
-- `caseEscalationPanel` LWC
+### Deployment is not activation
 
-### `unpackaged/` — org-specific metadata
+V4 adds `Case_Escalation_Config__mdt.Priority_Automation_Enabled__c`. The Custom Metadata **type** is package-owned; the `Default` record is operational configuration outside the package. Production deployment explicitly leaves the priority automation disabled. `pipelines/activate-feature.yml` changes the state later through a separately governable Azure DevOps Environment.
 
-The demo keeps `Case_DevOps_Demo` Permission Set outside the package. SFDX-Git-Delta is scoped **only** to this directory. A component is never deployed by both the unlocked package and SGD.
+### Recovery favors safe roll-forward
 
-## Application behavior
+Before Production deployment, `scripts/rollback/capture.sh` records installed packages and retrieves governed unpackaged metadata. `restore-unpackaged.sh` can restore that metadata only when `ALLOW_ROLLBACK=true`. Package-owned code is not blindly downgraded; mitigation is feature disablement followed by a corrective package version.
 
-A Critical Case exercises two automation models:
+### Drift is ownership-aware
 
-1. Apex trigger/service sets `Priority = High`.
-2. Before-save Flow sets `Escalation_Source__c = Record-Triggered Flow`.
+`pipelines/org-drift.yml` runs a scheduled Production check:
 
-The LWC surfaces escalation level and priority and has local Jest tests.
+- Git-owned unpackaged metadata is retrieved and compared with the same Git manifest after conversion to Metadata API format.
+- Installed package state is recorded and can enforce `EXPECTED_PACKAGE_VERSION_ID`.
+- Runtime feature state is queried independently and can enforce `EXPECTED_FEATURE_ENABLED`.
+
+This prevents an intentional feature activation from being confused with unauthorized source drift.
 
 ## Repository layout
 
 ```text
-force-app/                       package-owned Salesforce source
-unpackaged/                      org-specific source eligible for delta deployment
-config/                          scratch-org/package definition
-manifest/                        full-source fallback manifest
+force-app/                     unlocked-package application
+unpackaged/                    org-specific metadata + default runtime config
+ops/feature-flags/             explicit enabled/disabled operational states
+manifest/                      full, drift and rollback manifests
 scripts/
-  delta/                         SGD generation + safe deployment fallback
-  package/                       create/build/install/promote package versions
-  quality/                       Salesforce Code Analyzer
-  scratch-org/                   ephemeral environment lifecycle
-  tests/                         LWC Jest execution
+  delta/                       Salesforce-aware delta generation/deploy
+  package/                     package create/build/install/promote
+  scratch-org/                 ephemeral PR environments
+  quality/                     Salesforce Code Analyzer
+  tests/                       LWC Jest
+  drift/                       Production drift controls
+  rollback/                    pre-deploy snapshot + unpackaged restore
+  feature-flags/               controlled runtime activation
+  verify/                      synthetic post-deployment checks
+  telemetry/                   release event telemetry
+  release/                     evidence manifest generation
+  environment/                 sandbox rebuild/bootstrap
 pipelines/
-  pr-validation.yml              standard V3 PR quality pipeline
-  pr-validation-sonarqube.yml    optional commercial SonarQube gate
-  package-build.yml              standalone package build
-  release-v3.yml                 build-once/promote-many release pipeline
-  templates/                     reusable Azure Pipelines logic
-docs/                            V2/V3 architecture and runbooks
-comparisons/
-  gearset/                       specialized-platform mapping
-  copado/                        specialized-platform mapping
+  pr-validation.yml            V3/V4 PR validation
+  pr-validation-sonarqube.yml  optional SonarQube overlay
+  release-v4.yml               release-train pipeline
+  org-drift.yml                scheduled Production drift detection
+  activate-feature.yml         separate Production activation/deactivation
+  sandbox-bootstrap.yml        post-refresh Integration bootstrap
+  legacy-v2/                   earlier implementation retained for learning
+comparisons/                   Gearset/Copado workflow mapping
 ```
 
-## Local developer validation
+## Release workflow
 
-Install dependencies:
+Create a release branch such as:
 
 ```bash
-npm install
-npm run test:unit:coverage
+git checkout -b release/2026.10.1
 ```
 
-Authenticate and create a scratch org:
+Run `pipelines/release-v4.yml`. For a real release train, set `deltaFromRef` to the Git tag or commit corresponding to the last Production release, for example `prod-2026.09.3`. `HEAD~1` exists only as a demo fallback.
 
-```bash
-sf org login web --alias devhub --set-default-dev-hub
-export DEV_HUB_ALIAS=devhub
-export SCRATCH_ALIAS=local-v3
-./scripts/scratch-org/create.sh
-./scripts/scratch-org/deploy.sh
-./scripts/scratch-org/run-tests.sh
-./scripts/scratch-org/seed.sh
-./scripts/scratch-org/smoke-test.sh
-./scripts/scratch-org/destroy.sh
-```
+The pipeline builds one subscriber package version (`04t...`), deploys that same artifact to Integration and UAT, promotes it, captures Production recovery state, deploys Production with the feature disabled, runs synthetic verification, and publishes the release evidence bundle.
 
-## Delta deployment
+## Controlled activation
 
-Install the community plugin:
-
-```bash
-sf plugins install sfdx-git-delta
-```
-
-Generate an unpackaged delta:
-
-```bash
-export DELTA_FROM_REF=origin/main
-export DELTA_TO_REF=HEAD
-./scripts/delta/generate.sh
-```
-
-Deploy it:
-
-```bash
-export SF_ALIAS=integration
-./scripts/delta/deploy.sh
-```
-
-Fallback to full unpackaged deployment:
-
-```bash
-export DELTA_MODE=false
-./scripts/delta/deploy.sh
-```
-
-## Unlocked-package lifecycle
-
-Authenticate the Dev Hub, then:
-
-```bash
-export DEV_HUB_ALIAS=devhub
-./scripts/package/find-or-create.sh
-./scripts/package/build-version.sh
-```
-
-The build writes the immutable subscriber package version ID (`04t...`) to:
+After Production deployment and review:
 
 ```text
-artifacts/package/package-version-id.txt
+Azure DevOps Environment approval
+        |
+        v
+pipelines/activate-feature.yml
+        |
+        +--> deploy Custom Metadata state
+        +--> query actual state
+        +--> create synthetic Critical Case
+        +--> verify Apex + Flow behavior
+        '--> remove synthetic record
 ```
 
-Install that exact version in a sandbox:
+Locally, the same control is:
 
 ```bash
-export SF_ALIAS=integration
-./scripts/package/install-version.sh
+export SF_ALIAS=production
+FEATURE_STATE=enabled ./scripts/feature-flags/set.sh
+EXPECTED_FEATURE_ENABLED=true ./scripts/verify/post-deploy.sh
 ```
 
-After UAT succeeds, promote it:
+## Drift detection
 
 ```bash
-export DEV_HUB_ALIAS=devhub
-./scripts/package/promote-version.sh
+export SF_ALIAS=production
+./scripts/drift/check.sh
+
+# Optional desired-state enforcement
+export EXPECTED_PACKAGE_VERSION_ID=04t...
+./scripts/drift/check-package.sh
+
+export EXPECTED_FEATURE_ENABLED=true
+./scripts/drift/check-feature-state.sh
 ```
 
-Production receives the same promoted `04t` artifact.
+Drift evidence is written under `artifacts/drift/`.
 
-## Azure DevOps test evidence
+## Recovery snapshot
 
-V3 publishes:
+```bash
+export SF_ALIAS=production
+export RELEASE_ID=2026.10.1
+./scripts/rollback/capture.sh
+```
 
-- LWC Jest JUnit results
-- LWC code coverage
-- Apex JUnit results
-- Apex test-run coverage gate
-- Code Analyzer SARIF + HTML
-- SGD manifests/change inventory
-- package 0Ho/04t identifiers and release manifest
-- installed-package evidence per environment
-- scratch-org smoke-test evidence
+To restore captured unpackaged metadata:
 
-## SonarQube
+```bash
+export SF_ALIAS=production
+export ROLLBACK_SNAPSHOT_DIR=artifacts/rollback/2026.10.1
+export ALLOW_ROLLBACK=true
+./scripts/rollback/restore-unpackaged.sh
+```
 
-The default pipeline stays portable and uses Salesforce Code Analyzer. `pipelines/pr-validation-sonarqube.yml` demonstrates SonarQube Server integration with Azure DevOps tasks after the SonarQube extension/service connection is installed. See `docs/sonarqube.md`.
+For package-owned behavior, use feature disablement plus a corrective package version rather than assuming a package downgrade is safe.
 
-## Commercial Salesforce DevOps platforms
+## Post-deployment verification
 
-The native implementation is intentionally visible first. See:
+The verifier checks:
 
-- `comparisons/gearset/README.md`
-- `comparisons/copado/README.md`
-- `docs/platform-comparison.md`
+1. expected `04t` is installed when supplied;
+2. runtime feature state matches expectation;
+3. a synthetic Critical Case can be created;
+4. Apex sets `Priority = High` when enabled and leaves `Low` when disabled;
+5. the record-triggered Flow sets `Escalation_Source__c = Record-Triggered Flow`;
+6. the synthetic Case is deleted afterward.
 
-These map the hand-built Salesforce/Azure DevOps mechanics to specialized Salesforce DevOps platforms without pretending the workflows are identical.
+## Release telemetry and evidence
 
-Primary implementation references are collected in `docs/official-references.md`.
+`telemetry/run.sh` records step duration and status as JSONL. `render-summary.py` emits JSON + CSV. `generate-manifest.py` produces a release manifest containing Git identity, Azure build identity, package IDs, delta evidence hashes, Production verification, rollback snapshot reference, and telemetry evidence.
 
-## Suggested interview narrative
+This is raw release telemetry suitable for later aggregation. Metrics such as deployment frequency, lead time, change failure rate, and recovery time require history across many releases rather than one pipeline run.
 
-> I separated package-owned application metadata from org-specific metadata. Pull requests were validated in disposable scratch orgs across Apex, Flow, and LWC surfaces. After merge, the pipeline created one immutable unlocked-package version and promoted the same 04t artifact through Integration, UAT, and Production. Unpackaged metadata used Salesforce-aware delta deployment with a documented full-deploy fallback. Azure DevOps retained tests, quality results, delta manifests, package IDs, approvals, and deployment evidence for each release.
+## Sandbox refresh
+
+Run `pipelines/sandbox-bootstrap.yml` with the released `04t` that Integration should mirror. It reinstalls the package, deploys the complete unpackaged baseline, assigns the Permission Set, enables the feature for Integration, and executes post-refresh verification.
+
+## Recommended study order
+
+1. Explain the V1 shared-sandbox CI model.
+2. Explain why V2 moved PRs to ephemeral scratch orgs.
+3. Explain V3 package/delta ownership and immutable promotion.
+4. Explain why V4 separates deployment, activation, runtime state, drift, rollback evidence, verification and release telemetry.
+5. Compare the native implementation with Gearset or Copado under `comparisons/`.
+
+## Interview narrative
+
+> I evolved the Salesforce pipeline from source deployment into a production release-operating model. Application metadata is versioned as an immutable unlocked package, while org-specific metadata uses Salesforce-aware delta delivery. Before Production the pipeline captures recovery state; after deployment it performs synthetic verification and publishes release evidence. Runtime activation is separated from deployment through Custom Metadata, scheduled jobs detect org drift, and package recovery uses controlled roll-forward rather than assuming an unsafe downgrade. The same delivery primitives can then be compared with Gearset or Copado abstractions.
+
+See `docs/v4-release-operations.md`, `docs/org-drift.md`, `docs/rollback-and-roll-forward.md`, `docs/sandbox-refresh-runbook.md`, and `docs/release-train.md` for the operating runbooks.

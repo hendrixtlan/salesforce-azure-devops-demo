@@ -1,0 +1,232 @@
+trigger:
+  branches:
+    include:
+      - release/*
+      - hotfix/*
+
+pr: none
+
+parameters:
+  - name: deltaFromRef
+    displayName: Git ref/tag representing the last Production release
+    type: string
+    default: HEAD~1
+
+pool:
+  vmImage: ubuntu-latest
+
+stages:
+  - stage: Build
+    displayName: Build release candidate
+    variables:
+      - group: salesforce-devhub
+    jobs:
+      - job: BuildCandidate
+        steps:
+          - checkout: self
+            clean: true
+            fetchDepth: 0
+          - template: templates/setup-salesforce.yml
+          - template: templates/run-lwc-tests.yml
+          - template: templates/run-static-analysis.yml
+          - template: templates/setup-sgd.yml
+          - template: templates/auth-salesforce.yml
+            parameters:
+              secureFile: salesforce-devhub-jwt.key
+              alias: devhub
+          - bash: |
+              set -euo pipefail
+              export DEV_HUB_ALIAS=devhub
+              export RELEASE_BRANCH="$(Build.SourceBranchName)"
+              ./scripts/package/find-or-create.sh
+              ./scripts/package/build-version.sh
+              printf '%s\n' "$(Build.BuildNumber)" > artifacts/package/release-id.txt
+            displayName: Build immutable unlocked-package version
+          - bash: |
+              set -euo pipefail
+              export DELTA_FROM_REF='${{ parameters.deltaFromRef }}'
+              export DELTA_TO_REF='HEAD'
+              export DELTA_SOURCE_DIR='unpackaged'
+              ./scripts/delta/generate.sh
+            displayName: Generate governed unpackaged delta
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: artifacts
+              artifact: salesforce-release-v4
+              publishLocation: pipeline
+
+  - stage: Integration
+    displayName: Deploy and verify Integration
+    dependsOn: Build
+    variables:
+      - group: salesforce-integration
+    jobs:
+      - deployment: DeployIntegration
+        environment: salesforce-integration
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                  clean: true
+                - template: templates/setup-salesforce.yml
+                - template: templates/setup-sgd.yml
+                - template: templates/auth-salesforce.yml
+                  parameters:
+                    secureFile: salesforce-integration-jwt.key
+                    alias: integration
+                - task: DownloadPipelineArtifact@2
+                  inputs:
+                    artifact: salesforce-release-v4
+                    path: $(Build.SourcesDirectory)/artifacts
+                - bash: |
+                    set -euo pipefail
+                    export SF_ALIAS=integration
+                    export RELEASE_ID="$(Build.BuildNumber)"
+                    export TELEMETRY_FILE=artifacts/telemetry/integration-events.jsonl
+                    export PACKAGE_VERSION_ID=$(cat artifacts/package/package-version-id.txt)
+                    ./scripts/telemetry/run.sh package-install ./scripts/package/install-version.sh
+                    ./scripts/telemetry/run.sh delta-deploy ./scripts/delta/deploy.sh
+                    sf org assign permset --name Case_DevOps_Demo --target-org integration
+                    FEATURE_STATE=enabled ./scripts/feature-flags/set.sh
+                    EXPECTED_PACKAGE_VERSION_ID="$PACKAGE_VERSION_ID" EXPECTED_FEATURE_ENABLED=true ./scripts/telemetry/run.sh post-deploy-verify ./scripts/verify/post-deploy.sh
+                    python scripts/telemetry/render-summary.py "$TELEMETRY_FILE"
+                    ./scripts/package/capture-installed.sh
+                  displayName: Install, activate and verify Integration
+                - task: PublishPipelineArtifact@1
+                  condition: always()
+                  inputs:
+                    targetPath: artifacts
+                    artifact: integration-release-evidence-v4
+                    publishLocation: pipeline
+
+  - stage: UAT
+    displayName: Deploy and verify UAT
+    dependsOn: Integration
+    variables:
+      - group: salesforce-uat
+    jobs:
+      - deployment: DeployUAT
+        environment: salesforce-uat
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                  clean: true
+                - template: templates/setup-salesforce.yml
+                - template: templates/setup-sgd.yml
+                - template: templates/auth-salesforce.yml
+                  parameters:
+                    secureFile: salesforce-uat-jwt.key
+                    alias: uat
+                - task: DownloadPipelineArtifact@2
+                  inputs:
+                    artifact: salesforce-release-v4
+                    path: $(Build.SourcesDirectory)/artifacts
+                - bash: |
+                    set -euo pipefail
+                    export SF_ALIAS=uat
+                    export RELEASE_ID="$(Build.BuildNumber)"
+                    export TELEMETRY_FILE=artifacts/telemetry/uat-events.jsonl
+                    export PACKAGE_VERSION_ID=$(cat artifacts/package/package-version-id.txt)
+                    ./scripts/telemetry/run.sh package-install ./scripts/package/install-version.sh
+                    ./scripts/telemetry/run.sh delta-deploy ./scripts/delta/deploy.sh
+                    sf org assign permset --name Case_DevOps_Demo --target-org uat
+                    FEATURE_STATE=enabled ./scripts/feature-flags/set.sh
+                    EXPECTED_PACKAGE_VERSION_ID="$PACKAGE_VERSION_ID" EXPECTED_FEATURE_ENABLED=true ./scripts/telemetry/run.sh post-deploy-verify ./scripts/verify/post-deploy.sh
+                    python scripts/telemetry/render-summary.py "$TELEMETRY_FILE"
+                    ./scripts/package/capture-installed.sh
+                  displayName: Install, activate and verify UAT
+                - task: PublishPipelineArtifact@1
+                  condition: always()
+                  inputs:
+                    targetPath: artifacts
+                    artifact: uat-release-evidence-v4
+                    publishLocation: pipeline
+
+  - stage: Promote
+    displayName: Promote tested package version
+    dependsOn: UAT
+    variables:
+      - group: salesforce-devhub
+    jobs:
+      - job: PromotePackage
+        steps:
+          - checkout: self
+            clean: true
+          - template: templates/setup-salesforce.yml
+          - template: templates/auth-salesforce.yml
+            parameters:
+              secureFile: salesforce-devhub-jwt.key
+              alias: devhub
+          - task: DownloadPipelineArtifact@2
+            inputs:
+              artifact: salesforce-release-v4
+              path: $(Build.SourcesDirectory)/artifacts
+          - bash: |
+              set -euo pipefail
+              export DEV_HUB_ALIAS=devhub
+              ./scripts/package/promote-version.sh
+            displayName: Promote 04t to Released
+
+  - stage: Production
+    displayName: Production deployment with rollback capture
+    dependsOn: Promote
+    variables:
+      - group: salesforce-production
+    jobs:
+      - deployment: DeployProduction
+        environment: salesforce-production
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                  clean: true
+                  fetchDepth: 0
+                - template: templates/setup-salesforce.yml
+                - template: templates/setup-sgd.yml
+                - template: templates/auth-salesforce.yml
+                  parameters:
+                    secureFile: salesforce-production-jwt.key
+                    alias: production
+                - task: DownloadPipelineArtifact@2
+                  inputs:
+                    artifact: salesforce-release-v4
+                    path: $(Build.SourcesDirectory)/artifacts
+                - bash: |
+                    set -euo pipefail
+                    export SF_ALIAS=production
+                    export RELEASE_ID="$(Build.BuildNumber)"
+                    export ROLLBACK_OUTPUT_DIR="artifacts/rollback/$(Build.BuildNumber)"
+                    ./scripts/rollback/capture.sh
+                  displayName: Capture pre-deployment recovery state
+                - bash: |
+                    set -euo pipefail
+                    export SF_ALIAS=production
+                    export RELEASE_ID="$(Build.BuildNumber)"
+                    export TELEMETRY_FILE=artifacts/telemetry/events.jsonl
+                    export PACKAGE_VERSION_ID=$(cat artifacts/package/package-version-id.txt)
+                    ./scripts/telemetry/run.sh package-install ./scripts/package/install-version.sh
+                    ./scripts/telemetry/run.sh delta-deploy ./scripts/delta/deploy.sh
+                    sf org assign permset --name Case_DevOps_Demo --target-org production
+                    FEATURE_STATE=disabled ./scripts/feature-flags/set.sh
+                    EXPECTED_PACKAGE_VERSION_ID="$PACKAGE_VERSION_ID" EXPECTED_FEATURE_ENABLED=false ./scripts/telemetry/run.sh post-deploy-verify ./scripts/verify/post-deploy.sh
+                    python scripts/telemetry/render-summary.py "$TELEMETRY_FILE"
+                    ./scripts/package/capture-installed.sh
+                  displayName: Deploy Production with feature disabled and verify
+                - bash: |
+                    set -euo pipefail
+                    export RELEASE_ID="$(Build.BuildNumber)"
+                    export DELTA_FROM_REF='${{ parameters.deltaFromRef }}'
+                    export DELTA_TO_REF='HEAD'
+                    export PRODUCTION_VERIFY_FILE=artifacts/post-deploy/production/verification-summary.json
+                    python scripts/release/generate-manifest.py
+                  displayName: Generate immutable release evidence manifest
+                - task: PublishPipelineArtifact@1
+                  condition: always()
+                  inputs:
+                    targetPath: artifacts
+                    artifact: production-release-evidence-v4
+                    publishLocation: pipeline

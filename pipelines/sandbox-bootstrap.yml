@@ -1,0 +1,40 @@
+trigger: none
+pr: none
+
+parameters:
+  - name: packageVersionId
+    displayName: Released 04t package version to install
+    type: string
+    default: ''
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - group: salesforce-integration
+
+steps:
+  - checkout: self
+    clean: true
+  - template: templates/setup-salesforce.yml
+  - template: templates/auth-salesforce.yml
+    parameters:
+      secureFile: salesforce-integration-jwt.key
+      alias: integration
+  - bash: |
+      set -euo pipefail
+      if [[ -z '${{ parameters.packageVersionId }}' ]]; then
+        echo 'packageVersionId is required.' >&2
+        exit 2
+      fi
+      export SF_ALIAS=integration
+      export PACKAGE_VERSION_ID='${{ parameters.packageVersionId }}'
+      export FEATURE_STATE=enabled
+      ./scripts/environment/bootstrap.sh
+    displayName: Rebuild Integration after sandbox refresh
+  - task: PublishPipelineArtifact@1
+    condition: always()
+    inputs:
+      targetPath: artifacts
+      artifact: sandbox-bootstrap-evidence
+      publishLocation: pipeline

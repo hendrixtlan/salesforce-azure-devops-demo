@@ -12,7 +12,12 @@
     <types>
         <members>Case.Escalation_Level__c</members>
         <members>Case.Escalation_Source__c</members>
+        <members>Case_Escalation_Config__mdt.Priority_Automation_Enabled__c</members>
         <name>CustomField</name>
+    </types>
+    <types>
+        <members>Case_Escalation_Config__mdt</members>
+        <name>CustomObject</name>
     </types>
     <types>
         <members>Case_Escalation_Audit</members>
@@ -25,6 +30,10 @@
     <types>
         <members>Case_DevOps_Demo</members>
         <name>PermissionSet</name>
+    </types>
+    <types>
+        <members>Case_Escalation_Config.Default</members>
+        <name>CustomMetadata</name>
     </types>
     <version>68.0</version>
 </Package>

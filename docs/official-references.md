@@ -37,3 +37,12 @@ SGD is a community plugin and is not an officially supported Salesforce product.
 - Gearset CI documentation: https://docs.gearset.com/en/collections/10441567-continuous-integration
 - Gearset Delta CI: https://docs.gearset.com/en/articles/5069914-an-introduction-to-delta-ci
 - Copado Source Format Pipelines promotion: https://docs.copado.com/articles/?_escaped_fragment_=source-format-pipelines-publication%2Fcreate-and-execute-a-promotion-with-source-format-pipelines
+
+## V4 release operations
+
+- Retrieve metadata: https://developer.salesforce.com/docs/platform/salesforce-cli-reference/guide/cli_reference_project_retrieve_start.html
+- Convert source to Metadata API format: https://developer.salesforce.com/docs/platform/salesforce-cli-reference/guide/cli_reference_project_convert_source.html
+- List installed packages: https://developer.salesforce.com/docs/platform/salesforce-cli-reference/guide/cli_reference_package_installed_list.html
+- Custom Metadata record generation/reference: https://developer.salesforce.com/docs/platform/salesforce-cli-reference/guide/cli_reference_cmdt_generate_record.html
+- Delete synthetic verification records: https://developer.salesforce.com/docs/platform/salesforce-cli-reference/guide/cli_reference_data_delete_record.html
+- Publish pipeline artifacts: https://learn.microsoft.com/azure/devops/pipelines/tasks/utility/publish-pipeline-artifact

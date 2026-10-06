@@ -1,8 +1,8 @@
 {
   "name": "salesforce-azure-devops-demo",
-  "version": "3.0.0",
+  "version": "4.0.0",
   "private": true,
-  "description": "Salesforce release engineering reference implementation for Azure DevOps.",
+  "description": "Salesforce enterprise release operations and Azure DevOps reference implementation.",
   "scripts": {
     "test": "npm run test:unit",
     "test:unit": "sfdx-lwc-jest",

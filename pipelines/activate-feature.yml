@@ -1,0 +1,56 @@
+trigger: none
+pr: none
+
+parameters:
+  - name: state
+    displayName: Desired feature state
+    type: string
+    default: enabled
+    values:
+      - enabled
+      - disabled
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - group: salesforce-production
+
+stages:
+  - stage: ChangeFeatureState
+    displayName: Controlled production feature state change
+    jobs:
+      - deployment: FeatureState
+        environment: salesforce-production-feature-control
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                  clean: true
+                - template: templates/setup-salesforce.yml
+                - template: templates/auth-salesforce.yml
+                  parameters:
+                    secureFile: salesforce-production-jwt.key
+                    alias: production
+                - bash: |
+                    set -euo pipefail
+                    export SF_ALIAS=production
+                    export FEATURE_STATE='${{ parameters.state }}'
+                    ./scripts/feature-flags/set.sh
+                  displayName: Set production feature state
+                - bash: |
+                    set -euo pipefail
+                    export SF_ALIAS=production
+                    export EXPECTED_FEATURE_ENABLED=$([[ '${{ parameters.state }}' == 'enabled' ]] && echo true || echo false)
+                    if [[ -f artifacts/package/package-version-id.txt ]]; then
+                      export EXPECTED_PACKAGE_VERSION_ID=$(cat artifacts/package/package-version-id.txt)
+                    fi
+                    ./scripts/verify/post-deploy.sh
+                  displayName: Verify production after state change
+                - task: PublishPipelineArtifact@1
+                  condition: always()
+                  inputs:
+                    targetPath: artifacts/post-deploy
+                    artifact: feature-state-verification
+                    publishLocation: pipeline
